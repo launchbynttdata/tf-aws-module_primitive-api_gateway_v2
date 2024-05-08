@@ -1,0 +1,24 @@
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+name: increment-tagged-version
+
+permissions:
+  contents: write
+
+jobs:
+  increment_tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        ref: 'main'
+    - name: Fetch Tags
+      run: git fetch --tags origin
+    - name: Increment Tagged Version
+      uses: launchbynttdata/actions-lcaf-increment_tagged_version@v0
