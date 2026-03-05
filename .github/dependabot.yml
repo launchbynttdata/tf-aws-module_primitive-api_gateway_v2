@@ -1,0 +1,25 @@
+version: 2
+
+multi-ecosystem-groups:
+  module:
+    schedule:
+      interval: "weekly"
+  workflows:
+    schedule:
+      interval: "weekly"
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    multi-ecosystem-group: "workflows"
+    patterns: ["*"]
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    multi-ecosystem-group: "module"
+    patterns: ["*"]
+
+  - package-ecosystem: "terraform"
+    directory: "/"
+    multi-ecosystem-group: "module"
+    patterns: ["*"]
