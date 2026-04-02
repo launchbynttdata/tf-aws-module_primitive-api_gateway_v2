@@ -23,3 +23,10 @@ updates:
     directory: "/"
     multi-ecosystem-group: "module"
     patterns: ["*"]
+      ignore:
+        - dependency-name: "hashicorp/*"
+          update-types: ["version-update:semver-major"]
+        - dependency-name: "microsoft/*"
+          update-types: ["version-update:semver-major"]
+        - dependency-name: "azure/*"
+          update-types: ["version-update:semver-major"]
