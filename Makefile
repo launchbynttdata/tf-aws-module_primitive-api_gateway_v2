@@ -10,82 +10,187 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Include custom values from .lcafenv. Repository root is assumed to be the working directory.
-# Including overriding values in this file is preferred over modifying the contents below.
-LCAF_ENV_FILE = .lcafenv
--include $(LCAF_ENV_FILE)
-
-# Source repository for repo manifests
-REPO_MANIFESTS_URL ?= https://github.com/launchbynttdata/launch-common-automation-framework.git
-# Branch of source repository for repo manifests. Other tags not currently supported.
-REPO_BRANCH ?= refs/tags/1.8.1
-# Path to seed manifest in repository referenced in REPO_MANIFESTS_URL
-REPO_MANIFEST ?= manifests/terraform_modules/seed/manifest.xml
-
-# Settings to pull in Nexient version of (google) repo utility that supports environment substitution:
-REPO_URL ?= https://github.com/launchbynttdata/git-repo.git
-# Branch of the repository referenced by REPO_URL to use
-REPO_REV ?= main
-export REPO_REV REPO_URL
-
-# Example variable to substituted after init, but before sync in repo manifests.
-GITBASE ?= https://github.com/launchbynttdata/
-GITREV ?= main
-export GITBASE GITREV
-
-# Set to true in a pipeline context
-IS_PIPELINE ?= false
-
-IS_AUTHENTICATED ?= false
+SHELL := /bin/bash
 
 JOB_NAME ?= job
 JOB_EMAIL ?= job@job.job
 
-COMPONENTS_DIR = components
--include $(COMPONENTS_DIR)/Makefile
-
-MODULE_DIR ?= ${COMPONENTS_DIR}/module
-
 PYTHON3_INSTALLED = $(shell which python3 > /dev/null 2>&1; echo $$?)
 MISE_INSTALLED = $(shell which mise > /dev/null 2>&1; echo $$?)
 ASDF_INSTALLED = $(shell which asdf > /dev/null 2>&1; echo $$?)
-REPO_INSTALLED = $(shell which repo > /dev/null 2>&1; echo $$?)
 GIT_USER_SET = $(shell git config --get user.name > /dev/null 2>&1; echo $$?)
 GIT_EMAIL_SET = $(shell git config --get user.email > /dev/null 2>&1; echo $$?)
 
-.PHONY: configure-git-hooks
-configure-git-hooks: configure-dependencies
-ifeq ($(PYTHON3_INSTALLED), 0)
-	pre-commit install
-else
-	$(error Missing python3, which is required for pre-commit. Install python3 and rerun.)
-endif
+# ------------------------------------------------------------------------------
+# Binaries
+# ------------------------------------------------------------------------------
 
-ifeq ($(IS_PIPELINE),true)
-.PHONY: git-config
-git-config:
-	@set -ex; \
-	git config --global user.name "$(JOB_NAME)"; \
-	git config --global user.email "$(JOB_EMAIL)"; \
-	git config --global color.ui false
+GO ?= go
+GOLANGCI_LINT ?= golangci-lint
+TEE ?= tee
+GREP ?= grep
+FIND ?= find
+TERRAFORM ?= terraform
+RM ?= rm -rf
+TFLINT ?= tflint
 
-configure: git-config
-endif
+# ------------------------------------------------------------------------------
+# Variables — Golang
+# ------------------------------------------------------------------------------
 
-ifeq ($(IS_AUTHENTICATED),true)
-.PHONY: git-auth
-git-auth:
-	$(call config,Bearer $(GIT_TOKEN))
+GO_TEST_DIRECTORIES ?= tests
+GO_TEST_TIMEOUT ?= 2h
+GO_TEST_READONLY_DIRECTORY ?= post_deploy_functional_readonly
+TEST_RUN_ONLY_READONLY = #intentionally empty
+TEST_RUN_EXCLUDE_READONLY = -v
+GOLANGCI_LINT_CONFIG ?= .golangci.yaml
+DISABLE_MAKE_CHECK_LINT ?= false
+CURRENT_DIR = $(notdir $(shell pwd))
 
-define config
-	@set -ex; \
-	git config --global http.extraheader "AUTHORIZATION: $(1)"; \
-	git config --global http.https://gerrit.googlesource.com/git-repo/.extraheader ''; \
-	git config --global http.version HTTP/1.1;
+# If ARM_SUBSCRIPTION_ID is not already set by the environment, we'll try to use the `az` command
+# to retrieve it. If `az` isn't found or not logged in, we'll silently continue here and catch
+# that case elsewhere.
+export ARM_SUBSCRIPTION_ID ?= $(shell command -v az >/dev/null 2>&1 && az account show 2>/dev/null | jq -r .id)
+
+# ------------------------------------------------------------------------------
+# Variables — Terraform module
+# ------------------------------------------------------------------------------
+
+ALL_TF_MODULES = $(shell $(call list_terraform_modules))
+ALL_EXAMPLES = $(shell $(call list_examples))
+TFLINT_CONFIG ?= .tflint.hcl
+VAR_FILE ?= test.tfvars
+AWS_PROFILE ?= default
+AWS_REGION ?= us-east-2
+
+# ------------------------------------------------------------------------------
+# Functions — Golang
+# ------------------------------------------------------------------------------
+
+# Checks for Go files in the GO_TEST_DIRECTORIES. If they exist, runs the default configuration for golangci-lint
+# https://golangci-lint.run/usage/quick-start/
+define go_lint
+	$(FIND) $(1)/ -name '*.go' | $(GREP) -q '\.go' || exit 0; $(GOLANGCI_LINT) run -c $(GOLANGCI_LINT_CONFIG) -v ./$(1)/...;
+
 endef
 
-configure: git-auth
-endif
+# Check for Go files. If they exist, run tests. Either runs only readonly tests(default) or tests except readonly ones
+define go_test
+	$(FIND) $(1)/ -name '*.go' |$(GREP) $(2) $(GO_TEST_READONLY_DIRECTORY) | $(GREP) -q '\.go' || exit 0; $(GO) test -v -count=1 -timeout=$(GO_TEST_TIMEOUT) $$($(GO) list ./$(1)/...|$(GREP) $(2)  $(GO_TEST_READONLY_DIRECTORY)) ;
+
+endef
+
+# ------------------------------------------------------------------------------
+# Functions — Terraform module
+# ------------------------------------------------------------------------------
+
+define check_terraform_fmt
+	echo && echo "Formatting Terraform files ...";
+	$(TERRAFORM) fmt -recursive;
+
+endef
+
+define clean_terraform_module
+	$(RM) $(1)/.terraform* $(1)/terraform.*;
+	$(RM) $(1)/provider.tf
+endef
+
+define init_terraform_module
+	echo && echo "Initializing $(1) ...";
+	$(TERRAFORM) -chdir=$(1) init -backend=false -input=false;
+
+endef
+
+define list_terraform_modules
+	$(FIND) . -path "*/.terraform" -prune -o -name "main.tf" -not -path '*pipeline*' -not -path '*examples*' -exec dirname {} \;;
+
+endef
+
+define list_examples
+	$(FIND) ./examples -path "*/.terraform" -prune -o -name "main.tf" -not -path '*pipeline*' -exec dirname {} \; 2>/dev/null
+endef
+
+# ------------------------------------------------------------------------------
+# Provider templates
+# ------------------------------------------------------------------------------
+# When running `make lint` or `make test`, provider configuration files are
+# auto-generated for each example directory based on the providers declared in
+# `terraform providers` output.  The define blocks below contain the default
+# content written to each example's provider.tf for the matching registry
+# provider.
+#
+# To override auto-generation entirely, set the PROVIDER_TEMPLATE environment
+# variable to the path of a custom provider.tf file:
+#
+#   $ PROVIDER_TEMPLATE=my-provider.tf make test
+#
+# When set, that file is copied verbatim into every example directory instead of
+# running the per-provider detection logic below.
+# ------------------------------------------------------------------------------
+
+PROVIDER_TEMPLATE ?=
+
+define aws_provider
+provider \"aws\" {\n  region  = \"$(AWS_REGION)\"\n  profile = \"$(AWS_PROFILE)\"\n}\n\nprovider \"aws\" {\n  alias   = \"global\"\n  region  = \"us-east-1\"\n  profile = \"$(AWS_PROFILE)\"\n}\n
+endef
+
+define azurerm_provider
+provider \"azurerm\" {\n  skip_provider_registration = true\n  features {\n    resource_group {\n      prevent_deletion_if_contains_resources = false\n    }\n  }\n}\n
+endef
+
+define azapi_provider
+provider \"azapi\" {\n  use_cli = true\n  use_msi = false\n}\n
+endef
+
+define azuredevops_provider
+provider \"azuredevops\" {}\n
+endef
+
+define provider_file_path
+$(1)/provider.tf
+endef
+
+define add_provider_details
+	$(if $(findstring hashicorp/aws,$(2)),grep -qs "aws" $(1) || bash -c 'echo -e "$(call aws_provider)"' >> $(1),)
+	$(if $(findstring azure/azapi,$(2)),grep -qs "azapi" $(1) || bash -c 'echo -e "$(call azapi_provider)"' >> $(1),)
+	$(if $(findstring microsoft/azuredevops,$(2)),grep -qs "azuredevops" $(1) || bash -c 'echo -e "$(call azuredevops_provider)"' >> $(1),)
+	$(if $(findstring hashicorp/azurerm,$(2)),grep -qs "azurerm" $(1) || bash -c 'echo -e "$(call azurerm_provider)"' >> $(1),)
+endef
+
+define create_example_providers
+	$(eval PROVIDER_FILE_PATH:=$(call provider_file_path,$(1)))
+	$(foreach PROVIDER,$(shell terraform providers | sed -re 's/.+\[(.+\/.+\/.+)\].+/\1/g' | grep registry | sort | uniq),$(call add_provider_details,$(PROVIDER_FILE_PATH),$(PROVIDER)))
+endef
+
+define plan_terraform_module
+	echo && echo "Planning $(1) ...";
+	if [ -f "$(1)/$(VAR_FILE)" ]; then \
+		echo "Using $(VAR_FILE) for variable inputs"; \
+		$(TERRAFORM) -chdir=$(1) plan -input=false -out=terraform.tfplan -var-file $(VAR_FILE); \
+	else \
+		echo "$(VAR_FILE) doesn't exist, falling back to default (terraform.tfvars)"; \
+		$(TERRAFORM) -chdir=$(1) plan -input=false -out=terraform.tfplan; \
+	fi;
+	echo && echo "Creating JSON plan output for $(1) ...";
+	cd $(1) && $(TERRAFORM) show -json ./terraform.tfplan > ./terraform.tfplan.json;
+
+endef
+
+define tflint_terraform_module
+	echo && echo "Linting $(1) ...";
+	(cd $(1) && TF_LOG=info $(TFLINT) -c $(PWD)/$(TFLINT_CONFIG)) || exit 1;
+
+endef
+
+define validate_terraform_module
+	echo && echo "Validating $(1) ...";
+	$(TERRAFORM) -chdir=$(1) validate || exit 1;
+
+endef
+
+# ==============================================================================
+# Targets — Setup / Configuration
+# ==============================================================================
 
 .PHONY: configure-dependencies
 configure-dependencies:
@@ -99,34 +204,160 @@ else
 	$(error Missing supported dependency manager. Install asdf-vm (https://asdf-vm.com/) or mise (https://mise.jdx.dev/) and rerun)
 endif
 
+.PHONY: configure-git-hooks
+configure-git-hooks: configure-dependencies
+ifeq ($(PYTHON3_INSTALLED), 0)
+	pre-commit install
+else
+	$(error Missing python3, which is required for pre-commit. Install python3 and rerun.)
+endif
+
 .PHONY: configure
 configure: configure-git-hooks
 ifneq ($(and $(GIT_USER_SET), $(GIT_EMAIL_SET)), 0)
 	$(error Git identities are not set! Set your user.name and user.email using 'git config' and rerun)
 endif
-ifeq ($(REPO_INSTALLED), 0)
-	echo n | repo --color=never init --no-repo-verify \
-		-u "$(REPO_MANIFESTS_URL)" \
-		-b "$(REPO_BRANCH)" \
-		-m "$(REPO_MANIFEST)"
-	repo envsubst
-	repo sync
-else
-	$(error Missing Repo, which is required for platform sync. Install Repo (https://gerrit.googlesource.com/git-repo) and rerun.)
-endif
 
-# The first line finds and removes all the directories pulled in by repo
-# The second line finds and removes all the broken symlinks from removing things
-# https://stackoverflow.com/questions/42828021/removing-files-with-rm-using-find-and-xargs
 .PHONY: clean
 clean:
-	-repo list | awk '{ print $1; }' | cut -d '/' -f1 | uniq | xargs rm -rf
-	find . -type l ! -exec test -e {} \; -print | xargs rm -rf
+	$(MAKE) tfmodule/clean
 
-.PHONY: init-clean
-init-clean:
-	rm -rf .git
-	git init --initial-branch=main
-ifneq (,$(wildcard ./TEMPLATED_README.md))
-	mv TEMPLATED_README.md README.MD
+# ==============================================================================
+# Targets — Check / Lint / Test (base double-colon rules)
+# ==============================================================================
+
+.PHONY: check
+check:
+	$(MAKE) lint
+	$(MAKE) test
+
+.PHONY: lint
+lint::
+	@true
+
+.PHONY: test
+test::
+	@true
+
+# ==============================================================================
+# Targets — Golang
+# ==============================================================================
+
+.PHONY: go/test/environment/az
+go/test/environment/az:
+ifeq (,$(ARM_SUBSCRIPTION_ID))
+	$(error "ARM_SUBSCRIPTION_ID was not set and `az` was not found in your PATH.")
+else
+	@echo "Terratest will use Azure Subscription ID $$ARM_SUBSCRIPTION_ID"
 endif
+
+.PHONY: go/test/environment/aws
+go/test/environment/aws:
+	@echo "No environment configuration for AWS is defined."
+
+.PHONY: go/test/environment/gcp
+go/test/environment/gcp:
+	@echo "No environment configuration for GCP is defined."
+
+# Performs any environmental setup required for a cloud provider based on the name of the repository.
+.PHONY: go/test/environment
+go/test/environment:
+ifneq (,$(findstring tf-aws,$(CURRENT_DIR)))
+	$(MAKE) go/test/environment/aws
+else ifneq (,$(findstring tf-az,$(CURRENT_DIR)))
+	$(MAKE) go/test/environment/az
+else ifneq (,$(findstring tf-gcp,$(CURRENT_DIR)))
+	$(MAKE) go/test/environment/gcp
+else
+	@echo "Unrecognized module type, no environmental setup will be performed."
+endif
+
+.PHONY: go/list
+go/list:
+	@echo -n "Test dirs: "
+	@echo $(GO_TEST_DIRECTORIES) | tr ' ' '\n' | sort
+
+.PHONY: go/lint
+go/lint:
+	$(foreach test_dir,$(GO_TEST_DIRECTORIES),$(call go_lint,$(test_dir)))
+
+.PHONY: go/test
+go/test: go/test/environment
+	$(foreach test_dir,$(GO_TEST_DIRECTORIES),$(call go_test,$(test_dir),$(TEST_RUN_EXCLUDE_READONLY)))
+
+.PHONY: go/readonly_test
+go/readonly_test:
+	$(foreach test_dir,$(GO_TEST_DIRECTORIES),$(call go_test,$(test_dir),$(TEST_RUN_ONLY_READONLY)))
+
+# Golang extensions to lint / test
+.PHONY: lint
+lint::
+ifeq ($(DISABLE_MAKE_CHECK_LINT),false)
+	$(MAKE) go/lint
+else
+	$(info "make go/lint has been disabled!")
+endif
+
+.PHONY: test
+test:: tfmodule/plan
+	$(MAKE) go/test
+
+# ==============================================================================
+# Targets — Terraform module
+# ==============================================================================
+
+.PHONY: tfmodule/all
+tfmodule/all: lint
+
+.PHONY: tfmodule/clean
+tfmodule/clean:
+	@$(foreach module,$(ALL_TF_MODULES),$(call clean_terraform_module,$(module)))
+
+.PHONY: tfmodule/fmt
+tfmodule/fmt:
+	$(TERRAFORM) fmt -recursive;
+
+.PHONY: tfmodule/init
+tfmodule/init:
+	@$(foreach module,$(ALL_TF_MODULES),$(call init_terraform_module,$(module)))
+	@$(foreach module,$(ALL_EXAMPLES),$(call init_terraform_module,$(module)))
+
+.PHONY: tfmodule/lint
+tfmodule/lint: tfmodule/init
+	@$(call check_terraform_fmt)
+	@$(foreach module,$(ALL_TF_MODULES),$(call tflint_terraform_module,$(module)))
+	@$(foreach module,$(ALL_TF_MODULES),$(call validate_terraform_module,$(module)))
+	@$(foreach module,$(ALL_EXAMPLES),$(call tflint_terraform_module,$(module)))
+	@$(foreach module,$(ALL_EXAMPLES),$(call validate_terraform_module,$(module)))
+
+.PHONY: tfmodule/list
+tfmodule/list:
+	@echo -n "Modules: "
+	@echo $(ALL_TF_MODULES) | tr ' ' '\n' | sort
+	@echo -n "Examples: "
+	@echo $(ALL_EXAMPLES) | tr ' ' '\n' | sort
+
+.PHONY: tfmodule/plan
+tfmodule/plan: tfmodule/init
+	@$(foreach module,$(ALL_EXAMPLES),$(call plan_terraform_module,$(module)))
+
+.PHONY: tfmodule/create_example_providers
+tfmodule/create_example_providers: tfmodule/init
+ifdef PROVIDER_TEMPLATE
+	@$(if $(wildcard $(PROVIDER_TEMPLATE)),,$(error PROVIDER_TEMPLATE is set to '$(PROVIDER_TEMPLATE)' but the file does not exist))
+	@$(foreach example,$(ALL_EXAMPLES),cp $(PROVIDER_TEMPLATE) $(call provider_file_path,$(example));)
+else
+	@$(if $(findstring aws.global,$(shell grep -se "\\s*provider\\s*=" *.tf || true)),$(call create_example_providers,.),)
+	@$(foreach example,$(ALL_EXAMPLES),$(call create_example_providers,$(example)))
+endif
+
+# Terraform module extensions to lint / test
+.PHONY: lint
+lint::
+	$(MAKE) tfmodule/create_example_providers
+	$(MAKE) tfmodule/lint
+
+.PHONY: test
+test::
+	$(MAKE) tfmodule/create_example_providers
+	$(MAKE) tfmodule/plan
