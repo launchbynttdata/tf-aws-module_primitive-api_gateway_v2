@@ -1,5 +1,5 @@
 # NEVER EDIT MANUALLY
 # https://copier.readthedocs.io/en/stable/updating/#never-change-the-answers-file-manually
 
-_commit: 0.2.9-rc.3
+_commit: 0.3.2-rc.0
 _src_path: gh:launchbynttdata/launch-terraform-skeleton
