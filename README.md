@@ -112,12 +112,6 @@ If `make check` target is successful, developer is good to commit the code to pr
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 5.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.6 |
 
-## Providers
-
-| Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.100.0 |
-
 ## Modules
 
 No modules.
@@ -132,20 +126,20 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_body"></a> [body](#input\_body) | Optional OpenAPI specification that defines the set of routes and integrations to create as part of the HTTP APIs. Supported only for HTTP APIs. | `string` | `null` | no |
 | <a name="input_name"></a> [name](#input\_name) | Name of the API Gateway. | `string` | n/a | yes |
 | <a name="input_protocol_type"></a> [protocol\_type](#input\_protocol\_type) | API protocol. Valid values: `HTTP`, `WEBSOCKET`. Defaults to `HTTP` | `string` | `"HTTP"` | no |
-| <a name="input_body"></a> [body](#input\_body) | Optional OpenAPI specification that defines the set of routes and integrations to create as part of the HTTP APIs. Supported only for HTTP APIs. | `string` | `null` | no |
-| <a name="input_version_identifier"></a> [version\_identifier](#input\_version\_identifier) | Optional version identifier for the API. Must be between 1 and 64 characters in length. | `string` | `null` | no |
 | <a name="input_route_selection_expression"></a> [route\_selection\_expression](#input\_route\_selection\_expression) | The route selection expression for the API. Defaults to `$request.method $request.path`. See https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-selection-expressions.html#apigateway-websocket-api-route-selection-expressions for more details. | `string` | `"$request.method $request.path"` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Map of tags to assign to the API. | `map(string)` | `null` | no |
+| <a name="input_version_identifier"></a> [version\_identifier](#input\_version\_identifier) | Optional version identifier for the API. Must be between 1 and 64 characters in length. | `string` | `null` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_api_gateway_id"></a> [api\_gateway\_id](#output\_api\_gateway\_id) | API Identifier |
 | <a name="output_api_endpoint"></a> [api\_endpoint](#output\_api\_endpoint) | URI of the API, of the form `https://{api-id}.execute-api.{region}.amazonaws.com` for HTTP APIs and `wss://{api-id}.execute-api.{region}.amazonaws.com` for WebSocket APIs. |
+| <a name="output_api_gateway_id"></a> [api\_gateway\_id](#output\_api\_gateway\_id) | API Identifier |
+| <a name="output_api_protocol_type"></a> [api\_protocol\_type](#output\_api\_protocol\_type) | API protocol. |
 | <a name="output_arn"></a> [arn](#output\_arn) | ARN of the API |
 | <a name="output_execution_arn"></a> [execution\_arn](#output\_execution\_arn) | ARN prefix to be used in an `aws_lambda_permission`'s `source_arn` attribute or in an `aws_iam_policy` to authorize access to the @connections API. See https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-control-access-iam.html for details. |
-| <a name="output_api_protocol_type"></a> [api\_protocol\_type](#output\_api\_protocol\_type) | API protocol. |
 <!-- END_TF_DOCS -->
