@@ -10,17 +10,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-terraform {
-  required_version = "~> 1.0"
+output "api_gateway_id" {
+  value = module.api_gateway.api_gateway_id
+}
 
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0, < 7.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.6"
-    }
-  }
+output "api_protocol_type" {
+  value = module.api_gateway.api_protocol_type
 }
