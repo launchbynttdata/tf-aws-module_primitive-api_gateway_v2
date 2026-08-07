@@ -16,8 +16,8 @@ import (
 
 func TestComposableComplete(t *testing.T, ctx types.TestContext) {
 	t.Run("TestApiGatewayV2Exists", func(t *testing.T) {
-		awsApiGatewayId := terraform.Output(t, ctx.TerratestTerraformOptions(), "api_gateway_id")
-		awsApiGatewayProtocolType := terraform.Output(t, ctx.TerratestTerraformOptions(), "api_protocol_type")
+		awsApiGatewayId := terraform.OutputContext(t, context.Background(), ctx.TerratestTerraformOptions(), "api_gateway_id")
+		awsApiGatewayProtocolType := terraform.OutputContext(t, context.Background(), ctx.TerratestTerraformOptions(), "api_protocol_type")
 		awsClient := GetAWSApiGatewayV2Client(t)
 		output, err := awsClient.GetApi(context.TODO(), &apigatewayv2.GetApiInput{
 			ApiId: &awsApiGatewayId,

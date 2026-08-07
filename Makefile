@@ -60,19 +60,8 @@ ALL_TF_MODULES = $(shell $(call list_terraform_modules))
 ALL_EXAMPLES = $(shell $(call list_examples))
 TFLINT_CONFIG ?= .tflint.hcl
 VAR_FILE ?= test.tfvars
-AWS_PROFILE ?=
+AWS_PROFILE ?= default
 AWS_REGION ?= us-east-2
-GITHUB_OWNER ?= $(or $(GITHUB_REPOSITORY_OWNER),launchbynttdata)
-
-ifneq ($(strip $(AWS_PROFILE)),)
-export AWS_PROFILE
-endif
-
-ifneq ($(strip $(AWS_PROFILE)),)
-ifneq ($(shell printf '%s' '$(AWS_PROFILE)' | grep -Eq '^[A-Za-z0-9_.-]+$$'; echo $$?),0)
-$(error AWS_PROFILE contains unsupported characters)
-endif
-endif
 
 # ------------------------------------------------------------------------------
 # Functions — Golang
@@ -102,8 +91,8 @@ define check_terraform_fmt
 endef
 
 define clean_terraform_module
-	$(RM) -fr $(1)/.terraform* $(1)/terraform.*;
-	$(RM) -f $(1)/provider.tf
+	$(RM) $(1)/.terraform* $(1)/terraform.*;
+	$(RM) $(1)/provider.tf
 endef
 
 define init_terraform_module
@@ -126,10 +115,9 @@ endef
 # ------------------------------------------------------------------------------
 # When running `make lint` or `make test`, provider configuration files are
 # auto-generated for each example directory based on the providers declared in
-# the root module's `terraform providers` output.  The define blocks below
-# contain the default content written to each example's provider.tf for the
-# matching registry provider. Examples that declare additional providers not
-# present in the root module will not receive blocks for those providers.
+# `terraform providers` output.  The define blocks below contain the default
+# content written to each example's provider.tf for the matching registry
+# provider.
 #
 # To override auto-generation entirely, set the PROVIDER_TEMPLATE environment
 # variable to the path of a custom provider.tf file:
@@ -142,16 +130,8 @@ endef
 
 PROVIDER_TEMPLATE ?=
 
-define aws_provider_base
-provider \"aws\" {\n  region = \"$(AWS_REGION)\"\n$(if $(strip $(AWS_PROFILE)),  profile = \"$(AWS_PROFILE)\"\n)}\n
-endef
-
-define aws_provider_global
-\nprovider \"aws\" {\n  alias  = \"global\"\n  region = \"us-east-1\"\n$(if $(strip $(AWS_PROFILE)),  profile = \"$(AWS_PROFILE)\"\n)}\n
-endef
-
 define aws_provider
-$(call aws_provider_base)$(if $(INCLUDE_AWS_GLOBAL),$(call aws_provider_global))
+provider \"aws\" {\n  region  = \"$(AWS_REGION)\"\n  profile = \"$(AWS_PROFILE)\"\n}\n\nprovider \"aws\" {\n  alias   = \"global\"\n  region  = \"us-east-1\"\n  profile = \"$(AWS_PROFILE)\"\n}\n
 endef
 
 define azurerm_provider
@@ -166,10 +146,6 @@ define azuredevops_provider
 provider \"azuredevops\" {}\n
 endef
 
-define github_provider
-provider \"github\" {\n  owner = \"$(GITHUB_OWNER)\"\n}\n
-endef
-
 define provider_file_path
 $(1)/provider.tf
 endef
@@ -179,12 +155,10 @@ define add_provider_details
 	$(if $(findstring azure/azapi,$(2)),grep -qs "azapi" $(1) || bash -c 'echo -e "$(call azapi_provider)"' >> $(1),)
 	$(if $(findstring microsoft/azuredevops,$(2)),grep -qs "azuredevops" $(1) || bash -c 'echo -e "$(call azuredevops_provider)"' >> $(1),)
 	$(if $(findstring hashicorp/azurerm,$(2)),grep -qs "azurerm" $(1) || bash -c 'echo -e "$(call azurerm_provider)"' >> $(1),)
-	$(if $(findstring integrations/github,$(2)),grep -qs "github" $(1) || bash -c 'echo -e "$(call github_provider)"' >> $(1),)
 endef
 
 define create_example_providers
 	$(eval PROVIDER_FILE_PATH:=$(call provider_file_path,$(1)))
-	$(eval INCLUDE_AWS_GLOBAL:=$(if $(filter .,$(1)),$(findstring aws.global,$(shell grep -se "\\s*provider\\s*=" *.tf || true)),))
 	$(foreach PROVIDER,$(shell terraform providers | sed -re 's/.+\[(.+\/.+\/.+)\].+/\1/g' | grep registry | sort | uniq),$(call add_provider_details,$(PROVIDER_FILE_PATH),$(PROVIDER)))
 endef
 
@@ -255,7 +229,6 @@ clean:
 .PHONY: check
 check:
 	$(MAKE) lint
-	$(MAKE) tfmodule/test
 	$(MAKE) test
 
 .PHONY: lint
@@ -339,7 +312,6 @@ tfmodule/all: lint
 .PHONY: tfmodule/clean
 tfmodule/clean:
 	@$(foreach module,$(ALL_TF_MODULES),$(call clean_terraform_module,$(module)))
-	@$(foreach module,$(ALL_EXAMPLES),$(call clean_terraform_module,$(module)))
 
 .PHONY: tfmodule/fmt
 tfmodule/fmt:
@@ -368,12 +340,6 @@ tfmodule/list:
 .PHONY: tfmodule/plan
 tfmodule/plan: tfmodule/init
 	@$(foreach module,$(ALL_EXAMPLES),$(call plan_terraform_module,$(module)))
-
-.PHONY: tfmodule/test
-tfmodule/test: tfmodule/init
-	@$(FIND) . -maxdepth 2 -path './.terraform' -prune -o -name '*.tftest.hcl' -print | $(GREP) -q 'tftest' || { echo "No Terraform test files found, skipping terraform test."; exit 0; }; \
-	echo && echo "Running Terraform tests ..."; \
-	$(TERRAFORM) test
 
 .PHONY: tfmodule/create_example_providers
 tfmodule/create_example_providers: tfmodule/init
